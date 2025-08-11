@@ -101,7 +101,7 @@ const Popup = () => {
       // Prepare the data for Notion
       const notionData = {
         parent: {
-          database_id: '24c1d93a72b181e8997cfb3aa4d7208f',
+          database_id: process.env.CEB_NOTION_DATABASE_ID,
         },
         properties: {
           Task: {
@@ -148,16 +148,70 @@ const Popup = () => {
         },
       };
 
-      // Make API call to Notion
-      const response = await fetch('https://api.notion.com/v1/pages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.CEB_NOTION_API_TOKEN}`,
-          'Notion-Version': '2022-06-28',
-        },
-        body: JSON.stringify(notionData),
-      });
+      // Search for existing page by ID first
+      let existingPageId = null;
+      if (formData.id) {
+        console.log('Searching for existing page by ID...');
+
+        const searchResponse = await fetch('https://api.notion.com/v1/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.CEB_NOTION_API_TOKEN}`,
+            'Notion-Version': '2022-06-28',
+          },
+          body: JSON.stringify({
+            query: formData.story,
+            filter: {
+              property: 'object',
+              value: 'page',
+            },
+          }),
+        });
+
+        if (searchResponse.ok) {
+          const searchResults = await searchResponse.json();
+
+          console.log({ searchResults });
+
+          if (searchResults.results && searchResults.results.length > 0) {
+            existingPageId = searchResults.results[0].id;
+            console.log('Found existing page:', existingPageId);
+          } else {
+            console.log('No existing page found, will create new one');
+          }
+        }
+      }
+
+      // Make the appropriate API call based on search results
+      let response;
+      if (existingPageId) {
+        // Update existing page
+        console.log('Updating existing page...');
+        response = await fetch(`https://api.notion.com/v1/pages/${existingPageId}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.CEB_NOTION_API_TOKEN}`,
+            'Notion-Version': '2022-06-28',
+          },
+          body: JSON.stringify({
+            properties: notionData.properties,
+          }),
+        });
+      } else {
+        // Create new page
+        console.log('Creating new page...');
+        response = await fetch('https://api.notion.com/v1/pages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.CEB_NOTION_API_TOKEN}`,
+            'Notion-Version': '2022-06-28',
+          },
+          body: JSON.stringify(notionData),
+        });
+      }
 
       if (response.ok) {
         setSubmitStatus('success');
