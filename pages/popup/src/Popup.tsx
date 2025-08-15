@@ -1,8 +1,15 @@
 import '@src/Popup.css';
+import { ConfigModal } from './components/ConfigModal';
+import { Icons } from './components/Icons';
 import { useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
 import { exampleThemeStorage } from '@extension/storage';
 import { cn, ErrorDisplay, LoadingSpinner } from '@extension/ui';
 import { useEffect, useState } from 'react';
+
+interface NotionConfig {
+  apiToken: string;
+  databaseId: string;
+}
 
 const Popup = () => {
   const { isLight } = useStorage(exampleThemeStorage);
@@ -15,25 +22,66 @@ const Popup = () => {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [isLoading, setIsLoading] = useState(true);
+  const [notionConfig, setNotionConfig] = useState<NotionConfig | null>(null);
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [configError, setConfigError] = useState('');
+
+  // Load configuration on mount
+  useEffect(() => {
+    loadNotionConfig();
+  }, []);
+
+  const loadNotionConfig = async () => {
+    try {
+      const result = await chrome.storage.local.get(['notionApiToken', 'notionDatabaseId']);
+      if (result.notionApiToken && result.notionDatabaseId) {
+        setNotionConfig({
+          apiToken: result.notionApiToken,
+          databaseId: result.notionDatabaseId,
+        });
+        setConfigError('');
+      } else if (result.notionApiToken || result.notionDatabaseId) {
+        // Partial configuration found
+        setConfigError('Configuration incomplete. Please complete your Notion integration setup.');
+        setShowConfigModal(true);
+      } else {
+        setConfigError('Notion configuration not found. Please configure your integration.');
+      }
+    } catch {
+      setConfigError('Failed to load configuration');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleConfigSave = (config: NotionConfig) => {
+    setNotionConfig(config);
+    setConfigError('');
+    setShowConfigModal(false);
+  };
 
   const accessWebpageDOM = async () => {
     try {
       const [tab] = await chrome.tabs.query({ currentWindow: true, active: true });
 
-      if (!tab.id) return;
+      if (!tab.id) {
+        setIsLoading(false);
+        return;
+      }
 
       // Execute script in the webpage context to access DOM
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => {
           const storySelector =
-            '#story-dialog-parent > div > div.content.story-container > div.scrollable-content > div > div > div > div.title-container > h2'; // Main heading
+            '#story-dialog-parent > div > div.content.story-container > div.scrollable-content > div > div > div > div.title-container > h2';
           const prioritySelector =
-            '#story-dialog-parent > div > div.content.story-container > div.scrollable-content > div > div > div > div.async-details > div.right-column.r_react > div > div:nth-child(20) > div > div > div > div > div.css-mkkf9p.emkynbd0 > div.css-mcez24.e1o1j54b0 > span'; // Priority indicators
+            '#story-dialog-parent > div > div.content.story-container > div.scrollable-content > div > div > div > div.async-details > div.right-column.r_react > div > div:nth-child(20) > div > div > div > div > div.css-mkkf9p.emkynbd0 > div.css-mcez24.e1o1j54b0 > span';
           const idSelector =
-            '#story-dialog-parent > div > div.content.story-container > div.scrollable-content > div > div > div > div.async-details > div.right-column.r_react > div > div.attribute.story-id > button > span > input'; // ID elements
-          const typeSelector = '#story-dialog-story-type-dropdown > span.value'; // Type/category elements
-          const stateSelector = '#story-dialog-state-dropdown > div > div > div > div > span.value > span'; // State/status elements
+            '#story-dialog-parent > div > div.content.story-container > div.scrollable-content > div > div > div > div.async-details > div.right-column.r_react > div > div.attribute.story-id > button > span > input';
+          const typeSelector = '#story-dialog-story-type-dropdown > span.value';
+          const stateSelector = '#story-dialog-state-dropdown > div > div > div > div > span.value > span';
 
           const story = document.querySelector(storySelector)?.innerHTML || document.title || '';
           const priority = document.querySelector(prioritySelector)?.innerHTML || 'P5';
@@ -54,8 +102,6 @@ const Popup = () => {
 
       if (results && results[0] && results[0].result) {
         const webpageData = results[0].result;
-        console.log('Webpage DOM data:', webpageData);
-
         // Update form state with extracted data
         setFormData({
           story: webpageData.story || '',
@@ -64,22 +110,11 @@ const Popup = () => {
           type: webpageData.type || '',
           state: webpageData.state || '',
         });
-
-        // Also update the input fields
-        const storyInput = document.getElementById('story') as HTMLInputElement;
-        const priorityInput = document.getElementById('priority') as HTMLInputElement;
-        const idInput = document.getElementById('taskId') as HTMLInputElement;
-        const typeInput = document.getElementById('type') as HTMLInputElement;
-        const stateInput = document.getElementById('state') as HTMLInputElement;
-
-        if (storyInput && webpageData.story) storyInput.value = webpageData.story;
-        if (priorityInput && webpageData.priority) priorityInput.value = webpageData.priority;
-        if (idInput && webpageData.id) idInput.value = webpageData.id;
-        if (typeInput && webpageData.type) typeInput.value = webpageData.type;
-        if (stateInput && webpageData.state) stateInput.value = webpageData.state;
       }
     } catch (error) {
       console.error('Error accessing webpage DOM:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -91,6 +126,13 @@ const Popup = () => {
   // Handle form submission to Notion
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!notionConfig) {
+      setConfigError('Please configure your Notion integration first');
+      setShowConfigModal(true);
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmitStatus('idle');
 
@@ -101,7 +143,7 @@ const Popup = () => {
       // Prepare the data for Notion
       const notionData = {
         parent: {
-          database_id: process.env.CEB_NOTION_DATABASE_ID,
+          database_id: notionConfig.databaseId,
         },
         properties: {
           Task: {
@@ -153,7 +195,7 @@ const Popup = () => {
       if (formData.id) {
         console.log('Searching for existing page by ID...');
 
-        const searchResponse = await fetch('https://api.notion.com/v1/search', {
+        const searchResponse = await fetch(`https://api.notion.com/v1/databases/${notionConfig.databaseId}/query`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -161,18 +203,17 @@ const Popup = () => {
             'Notion-Version': '2022-06-28',
           },
           body: JSON.stringify({
-            query: formData.story,
             filter: {
-              property: 'object',
-              value: 'page',
+              property: 'ID',
+              rich_text: {
+                equals: formData.id,
+              },
             },
           }),
         });
 
         if (searchResponse.ok) {
           const searchResults = await searchResponse.json();
-
-          console.log({ searchResults });
 
           if (searchResults.results && searchResults.results.length > 0) {
             existingPageId = searchResults.results[0].id;
@@ -192,7 +233,7 @@ const Popup = () => {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.CEB_NOTION_API_TOKEN}`,
+            Authorization: `Bearer ${notionConfig.apiToken}`,
             'Notion-Version': '2022-06-28',
           },
           body: JSON.stringify({
@@ -206,7 +247,7 @@ const Popup = () => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.CEB_NOTION_API_TOKEN}`,
+            Authorization: `Bearer ${notionConfig.apiToken}`,
             'Notion-Version': '2022-06-28',
           },
           body: JSON.stringify(notionData),
@@ -217,10 +258,6 @@ const Popup = () => {
         setSubmitStatus('success');
         // Clear form after successful submission
         setFormData({ story: '', priority: '', id: '', type: '', state: '' });
-
-        // Clear input fields
-        const inputs = document.querySelectorAll('input');
-        inputs.forEach(input => (input.value = ''));
 
         // Reset status after 3 seconds
         setTimeout(() => setSubmitStatus('idle'), 3000);
@@ -237,21 +274,105 @@ const Popup = () => {
     }
   };
 
+  // Handle keyboard shortcuts
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      const formEvent = new Event('submit', { bubbles: true, cancelable: true }) as unknown as React.FormEvent;
+      handleSubmit(formEvent);
+    }
+  };
+
   useEffect(() => {
     accessWebpageDOM();
   }, []);
 
-  return (
-    <div className={cn('px-6 py-4', isLight ? 'bg-white' : 'bg-gray-700')}>
-      <h2 className={cn('mb-4 text-lg font-semibold', isLight ? 'text-gray-800' : 'text-gray-100')}>Story Details</h2>
+  if (isLoading) {
+    return (
+      <div className={cn('flex min-h-[600px] items-center justify-center', isLight ? 'bg-gray-50' : 'bg-gray-900')}>
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-blue-600"></div>
+          <p className={cn('text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+  return (
+    <div className={cn('min-h-[600px]', isLight ? 'bg-white' : 'bg-gray-900')}>
+      {/* Header */}
+      <div className={cn('border-b px-6 py-4', isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-800')}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className={cn('rounded-lg p-2', isLight ? 'bg-blue-100' : 'bg-blue-900')}>
+              <Icons.Notion />
+            </div>
+            <div>
+              <h1 className={cn('text-lg font-semibold', isLight ? 'text-gray-900' : 'text-white')}>
+                Shortcut to Notion
+              </h1>
+              <p className={cn('text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>Sync your stories seamlessly</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowConfigModal(true)}
+            className={cn('rounded-lg p-2 transition-colors', isLight ? 'hover:bg-gray-200' : 'hover:bg-gray-700')}
+            title="Configure Notion Integration">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+              />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Configuration Error */}
+      {configError && (
+        <div
+          className={cn(
+            'mx-6 mt-4 rounded-lg border p-4',
+            isLight ? 'border-yellow-200 bg-yellow-50' : 'border-yellow-700 bg-yellow-900/20',
+          )}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Icons.Error className={cn('text-yellow-600', isLight ? 'text-yellow-600' : 'text-yellow-400')} />
+              <span className={cn('text-sm font-medium', isLight ? 'text-yellow-800' : 'text-yellow-200')}>
+                {configError}
+              </span>
+            </div>
+            <button
+              onClick={() => setShowConfigModal(true)}
+              className={cn(
+                'rounded-lg px-3 py-1 text-xs font-medium transition-colors',
+                isLight
+                  ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
+                  : 'bg-yellow-800 text-yellow-200 hover:bg-yellow-700',
+              )}>
+              Configure
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Content */}
+      <div className="px-6 py-6">
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+        <form className="space-y-4" onSubmit={handleSubmit} onKeyDown={handleKeyDown}>
+          {/* Story Title */}
           <div>
             <label
               htmlFor="story"
-              className={cn('mb-2 block text-sm font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>
-              Story
+              className={cn(
+                'mb-3 flex items-center space-x-2 text-sm font-medium',
+                isLight ? 'text-gray-700' : 'text-gray-300',
+              )}>
+              <Icons.Story />
+              <span>Story Title</span>
             </label>
             <input
               id="story"
@@ -259,125 +380,191 @@ const Popup = () => {
               value={formData.story}
               onChange={e => handleInputChange('story', e.target.value)}
               className={cn(
-                'w-full rounded-lg border px-3 py-2 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500',
+                'h-10 w-full rounded-lg border px-4 py-3 transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500',
                 isLight
-                  ? 'border-gray-300 bg-white text-gray-900 placeholder-gray-500'
-                  : 'border-gray-600 bg-gray-800 text-gray-100 placeholder-gray-400',
+                  ? 'border-gray-300 bg-white text-gray-900 placeholder-gray-500 hover:border-gray-400'
+                  : 'border-gray-600 bg-gray-800 text-gray-100 placeholder-gray-400 hover:border-gray-500',
               )}
               placeholder="Enter story description"
+              required
             />
           </div>
 
-          <div>
-            <label
-              htmlFor="priority"
-              className={cn('mb-2 block text-sm font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>
-              Priority
-            </label>
-            <input
-              id="priority"
-              type="text"
-              value={formData.priority}
-              onChange={e => handleInputChange('priority', e.target.value)}
+          {/* Grid for other fields */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {/* Priority */}
+            <div>
+              <label
+                htmlFor="priority"
+                className={cn(
+                  'mb-3 flex items-center space-x-2 text-sm font-medium',
+                  isLight ? 'text-gray-700' : 'text-gray-300',
+                )}>
+                <Icons.Priority />
+                <span>Priority</span>
+              </label>
+              <select
+                id="priority"
+                value={formData.priority}
+                onChange={e => handleInputChange('priority', e.target.value)}
+                className={cn(
+                  'h-10 w-full rounded-lg border px-4 py-3 transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500',
+                  isLight
+                    ? 'border-gray-300 bg-white text-gray-900 hover:border-gray-400'
+                    : 'border-gray-600 bg-gray-800 text-gray-100 hover:border-gray-500',
+                )}>
+                <option value="Highest">Highest</option>
+                <option value="High">High</option>
+                <option value="Medium">Medium</option>
+                <option value="Low">Low</option>
+                <option value="Lowest">Lowest</option>
+                <option value="P5">P5</option>
+              </select>
+            </div>
+
+            {/* ID */}
+            <div>
+              <label
+                htmlFor="taskId"
+                className={cn(
+                  'mb-3 flex items-center space-x-2 text-sm font-medium',
+                  isLight ? 'text-gray-700' : 'text-gray-300',
+                )}>
+                <Icons.ID />
+                <span>Story ID</span>
+              </label>
+              <input
+                id="taskId"
+                type="text"
+                value={formData.id}
+                onChange={e => handleInputChange('id', e.target.value)}
+                className={cn(
+                  'h-10 w-full rounded-lg border px-4 py-3 transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500',
+                  isLight
+                    ? 'border-gray-300 bg-white text-gray-900 placeholder-gray-500 hover:border-gray-400'
+                    : 'border-gray-600 bg-gray-800 text-gray-100 placeholder-gray-400 hover:border-gray-500',
+                )}
+                placeholder="e.g., CH-123"
+              />
+            </div>
+
+            {/* Type */}
+            <div>
+              <label
+                htmlFor="type"
+                className={cn(
+                  'mb-3 flex items-center space-x-2 text-sm font-medium',
+                  isLight ? 'text-gray-700' : 'text-gray-300',
+                )}>
+                <Icons.Type />
+                <span>Type</span>
+              </label>
+              <select
+                id="type"
+                value={formData.type}
+                onChange={e => handleInputChange('type', e.target.value)}
+                className={cn(
+                  'h-10 w-full rounded-lg border px-4 py-3 transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500',
+                  isLight
+                    ? 'border-gray-300 bg-white text-gray-900 hover:border-gray-400'
+                    : 'border-gray-600 bg-gray-800 text-gray-100 hover:border-gray-500',
+                )}>
+                <option value="Feature">Feature</option>
+                <option value="Bug">Bug</option>
+                <option value="Story">Story</option>
+                <option value="Task">Task</option>
+                <option value="Epic">Epic</option>
+              </select>
+            </div>
+
+            {/* State */}
+            <div>
+              <label
+                htmlFor="state"
+                className={cn(
+                  'mb-3 flex items-center space-x-2 text-sm font-medium',
+                  isLight ? 'text-gray-700' : 'text-gray-300',
+                )}>
+                <Icons.State />
+                <span>Status</span>
+              </label>
+              <select
+                id="state"
+                value={formData.state}
+                onChange={e => handleInputChange('state', e.target.value)}
+                className={cn(
+                  'h-10 w-full rounded-lg border px-4 py-3 transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500',
+                  isLight
+                    ? 'border-gray-300 bg-white text-gray-900 hover:border-gray-400'
+                    : 'border-gray-600 bg-gray-800 text-gray-100 hover:border-gray-500',
+                )}>
+                <option value="Ready for Development">Ready for Development</option>
+                <option value="In Progress">In Progress</option>
+                <option value="In Review">In Review</option>
+                <option value="Done">Done</option>
+                <option value="Blocked">Blocked</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Status Messages */}
+          {submitStatus === 'success' && (
+            <div
               className={cn(
-                'w-full rounded-lg border px-3 py-2 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500',
-                isLight
-                  ? 'border-gray-300 bg-white text-gray-900 placeholder-gray-500'
-                  : 'border-gray-600 bg-gray-800 text-gray-100 placeholder-gray-400',
-              )}
-              placeholder="High/Medium/Low"
-            />
-          </div>
+                'rounded-lg border p-4',
+                isLight ? 'border-green-200 bg-green-50' : 'border-green-700 bg-green-900/20',
+              )}>
+              <div className="flex items-center space-x-2">
+                <Icons.Success className="text-green-600" />
+                <span className={cn('font-medium', isLight ? 'text-green-800' : 'text-green-200')}>
+                  Task saved successfully to Notion!
+                </span>
+              </div>
+            </div>
+          )}
 
-          <div>
-            <label
-              htmlFor="taskId"
-              className={cn('mb-2 block text-sm font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>
-              ID
-            </label>
-            <input
-              id="taskId"
-              type="text"
-              value={formData.id}
-              onChange={e => handleInputChange('id', e.target.value)}
+          {submitStatus === 'error' && (
+            <div
               className={cn(
-                'w-full rounded-lg border px-3 py-2 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500',
-                isLight
-                  ? 'border-gray-300 bg-white text-gray-900 placeholder-gray-500'
-                  : 'border-gray-600 bg-gray-800 text-gray-100 placeholder-gray-400',
-              )}
-              placeholder="Task ID"
-            />
-          </div>
+                'rounded-lg border p-4',
+                isLight ? 'border-red-200 bg-red-50' : 'border-red-700 bg-red-900/20',
+              )}>
+              <div className="flex items-center space-x-2">
+                <Icons.Error className="text-red-600" />
+                <span className={cn('font-medium', isLight ? 'text-red-800' : 'text-red-200')}>
+                  Error saving task. Please try again.
+                </span>
+              </div>
+            </div>
+          )}
 
-          <div>
-            <label
-              htmlFor="type"
-              className={cn('mb-2 block text-sm font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>
-              Type
-            </label>
-            <input
-              id="type"
-              type="text"
-              value={formData.type}
-              onChange={e => handleInputChange('type', e.target.value)}
-              className={cn(
-                'w-full rounded-lg border px-3 py-2 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500',
-                isLight
-                  ? 'border-gray-300 bg-white text-gray-900 placeholder-gray-500'
-                  : 'border-gray-600 bg-gray-800 text-gray-100 placeholder-gray-400',
-              )}
-              placeholder="Bug/Feature/Story"
-            />
-          </div>
-        </div>
-
-        <div>
-          <label
-            htmlFor="state"
-            className={cn('mb-2 block text-sm font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>
-            State
-          </label>
-          <input
-            id="state"
-            type="text"
-            value={formData.state}
-            onChange={e => handleInputChange('state', e.target.value)}
-            className={cn(
-              'w-full rounded-lg border px-3 py-2 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500',
-              isLight
-                ? 'border-gray-300 bg-white text-gray-900 placeholder-gray-500'
-                : 'border-gray-600 bg-gray-800 text-gray-100 placeholder-gray-400',
-            )}
-            placeholder="To Do/In Progress/Done"
-          />
-        </div>
-
-        {/* Status Messages */}
-        {submitStatus === 'success' && (
-          <div className="rounded-lg border border-green-400 bg-green-100 p-3 text-green-700">
-            Task saved successfully to Notion!
-          </div>
-        )}
-
-        {submitStatus === 'error' && (
-          <div className="rounded-lg border border-red-400 bg-red-100 p-3 text-red-700">
-            Error saving task. Please try again.
-          </div>
-        )}
-
-        <div className="pt-2">
+          {/* Submit Button */}
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || !notionConfig}
             className={cn(
-              'w-full rounded-lg px-4 py-2 font-medium shadow transition-all duration-200 hover:scale-105 disabled:cursor-not-allowed disabled:opacity-50',
-              isLight ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-blue-500 text-white hover:bg-blue-600',
+              'w-full rounded-lg px-6 py-3 font-semibold shadow-lg transition-all duration-200 hover:scale-[1.02] disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-50',
+              isLight
+                ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-blue-500/25 hover:from-blue-700 hover:to-blue-800'
+                : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-blue-500/25 hover:from-blue-600 hover:to-blue-700',
             )}>
-            {isSubmitting ? 'Saving...' : 'Save Task'}
+            {isSubmitting ? (
+              <div className="flex items-center justify-center space-x-2">
+                <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-white"></div>
+                <span>Saving to Notion...</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center space-x-2">
+                <Icons.Notion />
+                <span>{notionConfig ? 'Save to Notion' : 'Configure First'}</span>
+              </div>
+            )}
           </button>
-        </div>
-      </form>
+        </form>
+      </div>
+
+      {/* Configuration Modal */}
+      <ConfigModal isOpen={showConfigModal} onClose={() => setShowConfigModal(false)} onSave={handleConfigSave} />
     </div>
   );
 };

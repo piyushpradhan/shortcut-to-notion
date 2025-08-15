@@ -1,14 +1,39 @@
 {
-  "name": "chrome-extension-boilerplate-react-vite",
-  "version": "0.5.0",
-  "description": "chrome extension boilerplate",
+  "name": "shortcut-to-notion",
+  "version": "1.0.0",
+  "description": "Professional browser extension to seamlessly sync Shortcut (formerly Clubhouse) stories to Notion databases",
   "license": "MIT",
   "private": true,
   "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "https://github.com/Jonghakseo/chrome-extension-boilerplate-react-vite.git"
+    "url": "https://github.com/yourusername/shortcut-to-notion.git",
+    "directory": "."
   },
+  "homepage": "https://github.com/yourusername/shortcut-to-notion#readme",
+  "bugs": {
+    "url": "https://github.com/yourusername/shortcut-to-notion/issues"
+  },
+  "keywords": [
+    "shortcut",
+    "clubhouse",
+    "notion",
+    "browser-extension",
+    "chrome-extension",
+    "firefox-addon",
+    "productivity",
+    "project-management",
+    "sync",
+    "react",
+    "typescript",
+    "vite"
+  ],
+  "author": {
+    "name": "Your Name",
+    "email": "your.email@example.com",
+    "url": "https://github.com/yourusername"
+  },
+  "contributors": [],
   "type": "module",
   "scripts": {
     "clean:bundle": "rimraf dist && turbo clean:bundle",
@@ -34,7 +59,6 @@
     "update-version": "bash bash-scripts/update_version.sh",
     "copy-env": "bash bash-scripts/copy_env.sh",
     "set-global-env": "bash bash-scripts/set_global_env.sh",
-    "module-manager": "pnpm -F module-manager start",
     "postinstall": "pnpm copy-env"
   },
   "dependencies": {
@@ -92,6 +116,13 @@
   },
   "packageManager": "pnpm@10.11.0",
   "engines": {
-    "node": ">=22.15.1"
-  }
+    "node": ">=22.15.1",
+    "pnpm": ">=10.11.0"
+  },
+  "browserslist": [
+    "last 2 Chrome versions",
+    "last 2 Firefox versions",
+    "last 2 Safari versions",
+    "last 2 Edge versions"
+  ]
 }
