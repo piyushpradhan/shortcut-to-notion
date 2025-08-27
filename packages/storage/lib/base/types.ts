@@ -52,3 +52,12 @@ export interface ThemeStateType {
 export type ThemeStorageType = BaseStorageType<ThemeStateType> & {
   toggle: () => Promise<void>;
 };
+
+export interface NotionSettingsStateType {
+  notionApiKey: string;
+  notionDatabaseId: string;
+}
+
+export type NotionSettingsStorageType = BaseStorageType<NotionSettingsStateType> & {
+  updateSettings: (settings: Partial<NotionSettingsStateType>) => Promise<void>;
+};
